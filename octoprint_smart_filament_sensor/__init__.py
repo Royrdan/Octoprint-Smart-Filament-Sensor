@@ -203,8 +203,9 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
         if(not self.send_code):
             self._logger.error("Motion sensor detected no movement")
             self._logger.info("Pause command: " + self.pause_command)
-            self._printer.commands(self.pause_command)
-            self.send_code = True
+            if self.pause_command != "@DRY_RUN":
+                self._printer.commands(self.pause_command)
+                self.send_code = True
             self._data.filament_moving = False
             self.lastE = -1 # Set to -1 so it ignores the first test then continues
 
