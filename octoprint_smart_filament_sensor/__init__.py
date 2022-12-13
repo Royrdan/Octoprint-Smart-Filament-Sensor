@@ -24,7 +24,7 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
         GPIO.setwarnings(False)        # Disable GPIO warnings
 
         self.print_started = False
-        self.last_movement_time = None
+        self.last_movement_time = datetime.now()
         self.lastE = -1
         self.currentE = -1
         self.START_DISTANCE_OFFSET = 7
