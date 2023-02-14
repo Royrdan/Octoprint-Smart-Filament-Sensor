@@ -25,6 +25,7 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
 
         self.print_started = False
         self.last_movement_time = None
+        self.last_reset_time = datetime.now()
         self.lastE = -1
         self.currentE = -1
         self.START_DISTANCE_OFFSET = 7
@@ -56,6 +57,20 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
     @property
     def motion_sensor_detection_distance(self):
         return int(self._settings.get(["motion_sensor_detection_distance"]))
+
+#Periodic Reset
+
+    @property
+    def motion_sensor_reset_enabled(self):
+        return int(self._settings.get_boolean(["motion_sensor_reset_enabled"]))
+
+    @property
+    def motion_sensor_reset_remaining_ratio(self):
+        return int(self._settings.get(["motion_sensor_reset_remaining_ratio"]))
+
+    @property
+    def motion_sensor_reset_interval(self):
+        return int(self._settings.get(["motion_sensor_reset_interval"]))
 
 #Timeout detection
     @property
@@ -120,6 +135,9 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
 
             # Distance detection
             motion_sensor_detection_distance = 15, # Recommended detection distance from Marlin would be 7
+            motion_sensor_reset_enabled = False,
+            motion_sensor_reset_remaining_ratio = 70,
+            motion_sensor_reset_interval = 240,
 
             # Timeout detection
             motion_sensor_max_not_moving=45,  # Maximum time no movement is detected - default continously
@@ -266,6 +284,19 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
                     f"Remaining: {self._data.remaining_distance} - Extruded: {deltaDistance} = {self._data.remaining_distance - deltaDistance}"
                 )
                 self._data.remaining_distance = (self._data.remaining_distance - deltaDistance)
+
+                if self.motion_sensor_reset_enabled:
+                    try:
+                        remain_ratio = (self._data.remaining_distance / self.motion_sensor_detection_distance)
+                        last_reset_seconds = (datetime.now() - self.last_reset_time).total_seconds()
+
+                        if remain_ratio < (self.motion_sensor_reset_remaining_ratio / 100) and last_reset_seconds > self.motion_sensor_reset_interval :
+                            self._logger.debug(f"Performing reset below ratio threshold of {self.motion_sensor_reset_remaining_ratio}% after {self.motion_sensor_reset_interval}")
+                            self.last_reset_time = datetime.now()
+                            self._setup_sensor()
+
+                    except Exception as e:
+                        self._logger.error(f"Error in ratio reset: {e}")
 
             else:
                 # Only pause the print if its been over 5 seconds since the last movement. Stops pausing when the CPU gets hung up.
