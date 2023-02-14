@@ -81,6 +81,45 @@
                 <span class="help-block"><small>GCode commands that are sent to the printer are interpreted. Don't choose this value too small, because it could make the detection too sensitive.</small></span>
             </div>
         </div>
+        <!-- Advanced -->
+        <h6>{{ _('Advanced') }}</h6>
+        <!-- Enable / Disable skip pause while moving -->
+        <div class="control-group">
+            <div class="controls" data-toggle="tooltip" title="{{ _('Skip pause while filament is moving.') }}">
+                <label class="checkbox">
+                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.smartfilamentsensor.skip_pause_while_moving"> {{ _('Skip pause while moving and reset distance.') }}
+                </label>
+            </div>
+        </div>
+        <!-- Enable / Disable events -->
+        <div class="control-group">
+            <label class="control-label">{{ _('MQTT Event Publishing:') }}</label>
+            <div class="controls" data-toggle="tooltip" title="{{ _('Enable event publishing.') }}">
+                <label class="checkbox">
+                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.smartfilamentsensor.enable_event_publishing"> {{ _('Enable event publishing (MQTT)') }}
+                </label>
+            </div>
+        </div>
+        <!-- Enable / Disable Remaining Ratio Publishing -->
+        <div class="control-group">
+            <label class="control-label">{{ _('Remain Ratio Publishing:') }}</label>
+            <div class="controls" data-toggle="tooltip" title="{{ _('Enable remaining ratio publishing.') }}">
+                <label class="checkbox">
+                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.smartfilamentsensor.enable_publish_remaining_ratio"> {{ _('Publish remaining filament ratio event') }}
+                </label>
+            </div>
+        </div>
+        <!-- Interval Between Remaining Ratio Publishing -->
+        <div class="control-group">
+            <label class="control-label">{{ _('Remain Ratio Interval:') }}</label>
+            <div class="controls">
+                <div class="input-append" data-toggle="tooltip" title="{{ _('Interval between Remaining Ratio Publishing.') }}">
+                    <input type="number" step="any" min="0" class="input-mini text-right" data-bind="value: settingsViewModel.settings.plugins.smartfilamentsensor.event_publish_interval_remaining_ratio">
+                    <span class="add-on">sec</span>
+                </div>
+            </div>
+        </div>
+
         <!-- Connection test -->
         <h6>{{_('Connection Test') }}</h6>
         <div class="control-group">

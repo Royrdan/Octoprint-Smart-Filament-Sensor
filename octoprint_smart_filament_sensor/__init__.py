@@ -1,7 +1,7 @@
 # coding=utf-8
 from __future__ import absolute_import
 import octoprint.plugin
-from octoprint.events import Events
+from octoprint.events import Events, eventManager
 import RPi.GPIO as GPIO
 from time import sleep
 from datetime import datetime
@@ -10,12 +10,20 @@ import json
 from octoprint_smart_filament_sensor.filament_motion_sensor_timeout_detection import FilamentMotionSensorTimeoutDetection
 from octoprint_smart_filament_sensor.data import SmartFilamentSensorDetectionData
 
+PLUGIN_KEY_PREFIX = "SmartFilamentSensor_"
+
+EVENT_KEY_MOVEMENT = "Movement"
+EVENT_KEY_FILAMENT_CHANGE = "FilamentChange"
+EVENT_KEY_PAUSE_IGNORED = "PauseIgnored"
+EVENT_KEY_REMAIN_RATIO = "RemainRatio"
+
 class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
                                  octoprint.plugin.EventHandlerPlugin,
                                  octoprint.plugin.TemplatePlugin,
                                  octoprint.plugin.SettingsPlugin,
                                  octoprint.plugin.AssetPlugin,
                                  octoprint.plugin.SimpleApiPlugin):
+    _last_event_publish_data = dict()
 
     def initialize(self):
         self._logger.info("Running RPi.GPIO version '{0}'".format(GPIO.VERSION))
@@ -25,6 +33,8 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
 
         self.print_started = False
         self.last_movement_time = None
+        self._last_event_publish_data = dict()
+        self._last_event_publish_time = None
         self.lastE = -1
         self.currentE = -1
         self.START_DISTANCE_OFFSET = 7
@@ -52,10 +62,28 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
     def pause_command(self):
         return self._settings.get(["pause_command"])
 
+    @property
+    def skip_pause_while_moving(self):
+        return self._settings.get_boolean(["skip_pause_while_moving"])
+
 #Distance detection
     @property
     def motion_sensor_detection_distance(self):
         return int(self._settings.get(["motion_sensor_detection_distance"]))
+
+#Event Publishing
+
+    @property
+    def enable_event_publishing(self):
+        return self._settings.get_boolean(["enable_event_publishing"])
+
+    @property
+    def enable_publish_remaining_ratio(self):
+        return self._settings.get_boolean(["enable_publish_remaining_ratio"])
+
+    @property
+    def event_publish_interval_remaining_ratio(self):
+        return int(self._settings.get(["event_publish_interval_remaining_ratio"]))
 
 #Timeout detection
     @property
@@ -97,6 +125,7 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
         if self.motion_sensor_enabled == False:
             self._logger.info("Motion sensor is deactivated")
 
+        self._sendDataToClient(EVENT_KEY_MOVEMENT, dict(movement_detected=False), skip_check=True)
         self._data.filament_moving = False
         self.motion_sensor_thread = None
 
@@ -117,6 +146,10 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
             motion_sensor_enabled = True, #Sensor detection is enabled by default
             motion_sensor_pin=-1,  # Default is no pin
             detection_method = 0, # 0 = timeout detection, 1 = distance detection
+            enable_event_publishing = True,
+            enable_publish_remaining_ratio = True,
+            event_publish_interval_remaining_ratio = 5,
+            skip_pause_while_moving = False,
 
             # Distance detection
             motion_sensor_detection_distance = 15, # Recommended detection distance from Marlin would be 7
@@ -187,6 +220,10 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
                     self._logger.info("Motion sensor started: Timeout detection")
 
             self.send_code = False
+            if self.skip_pause_while_moving:
+                self._sendDataToClient(EVENT_KEY_PAUSE_IGNORED, dict(pause_ignored=False))
+            self._sendDataToClient(EVENT_KEY_FILAMENT_CHANGE, dict(printer_change_filament=False), skip_check=True)
+            self._sendDataToClient(EVENT_KEY_MOVEMENT, dict(movement_detected=True), skip_check=True)
             self._data.filament_moving = True
 
     # Stop the motion_sensor thread
@@ -202,15 +239,18 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
         # Check if stop signal was already sent
         if(not self.send_code):
             self._logger.error("Motion sensor detected no movement")
+            self._sendDataToClient(EVENT_KEY_MOVEMENT, dict(movement_detected=False), skip_check=True)
             self._logger.info("Pause command: " + self.pause_command)
             self._printer.commands(self.pause_command)
             self.send_code = True
+            self._sendDataToClient(EVENT_KEY_FILAMENT_CHANGE, dict(printer_change_filament=True), skip_check=True)
             self._data.filament_moving = False
             self.lastE = -1 # Set to -1 so it ignores the first test then continues
 
     # Reset the distance, if the remaining distance is smaller than the new value
     def reset_distance (self, pPin):
         self._logger.debug("Motion sensor detected movement")
+        self._sendDataToClient(EVENT_KEY_MOVEMENT, dict(movement_detected=True), skip_check=True)
         self.send_code = False
         self.last_movement_time = datetime.now()
         if(self._data.remaining_distance < self.motion_sensor_detection_distance):
@@ -231,6 +271,13 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
     # Calculate the remaining distance
     def calc_distance(self, pE):
         if (self.detection_method == 1):
+
+            if self.enable_publish_remaining_ratio:
+                try:
+                    remain_ratio = min((int((self._data.remaining_distance / self.motion_sensor_detection_distance) * 1e4) / 1e4), 1.0)
+                    self._sendDataToClient(EVENT_KEY_REMAIN_RATIO, dict(remaining_ratio=remain_ratio))
+                except Exception as e:
+                    self._logger.error(f"Error in publish ratio: {e}")
 
             # First check if need continue after last move
             if(self._data.remaining_distance > 0):
@@ -267,12 +314,39 @@ class SmartFilamentSensor(octoprint.plugin.StartupPlugin,
                 )
                 self._data.remaining_distance = (self._data.remaining_distance - deltaDistance)
 
+            elif self._data.filament_moving and self.skip_pause_while_moving:
+                self._sendDataToClient(EVENT_KEY_PAUSE_IGNORED, dict(pause_ignored=True))
+                self._logger.debug("Ignored pause command due to filament moving")
+                self.reset_distance(None)
             else:
                 # Only pause the print if its been over 5 seconds since the last movement. Stops pausing when the CPU gets hung up.
                 if (datetime.now() - self.last_movement_time).total_seconds() > 10:
                     self.printer_change_filament()
                 else:
                     self._logger.debug("Ignored pause command due to 5 second rule")
+
+    def _checkShouldPublish(self, event_id, dataDict, skip_check=False):
+        if skip_check:
+            return True
+        if self._last_event_publish_data != dataDict:
+            if event_id != EVENT_KEY_REMAIN_RATIO:
+                return True
+            if not self._last_event_publish_time:
+                return True
+            last_publish_diff = (datetime.now() - self._last_event_publish_time).total_seconds()
+            if last_publish_diff > self.event_publish_interval_remaining_ratio:
+                return True
+        return False
+
+    def _sendDataToClient(self, event_id, dataDict, skip_check=False):
+        if self.enable_event_publishing:
+            if self._checkShouldPublish(event_id, dataDict, skip_check):
+                eventKey = PLUGIN_KEY_PREFIX + event_id
+                eventManager().fire(eventKey, dataDict)
+                self._last_event_publish_data = dataDict
+                self._last_event_publish_time = datetime.now()
+            else:
+                self._logger.debug("Ignoring send data, duplicated dict:" + str(dataDict))
 
     def updateToUi(self):
         self._plugin_manager.send_plugin_message(self._identifier, self._data.toJSON())
