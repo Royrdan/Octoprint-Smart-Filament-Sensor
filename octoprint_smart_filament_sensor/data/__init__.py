@@ -8,7 +8,8 @@ class SmartFilamentSensorDetectionData(object):
     @remaining_distance.setter
     def remaining_distance(self, value):
         self._remaining_distance = value
-        self.callbackUpdateUI()
+        if self.callbackUpdateUI:
+            self.callbackUpdateUI()
 
     @property
     def print_started(self):
@@ -49,7 +50,8 @@ class SmartFilamentSensorDetectionData(object):
     @last_motion_detected.setter
     def last_motion_detected(self, value):
         self._last_motion_detected = value
-        self.callbackUpdateUI()
+        if self.callbackUpdateUI:
+            self.callbackUpdateUI()
 
     @property
     def filament_moving(self):
@@ -58,7 +60,8 @@ class SmartFilamentSensorDetectionData(object):
     @filament_moving.setter
     def filament_moving(self, value):
         self._filament_moving = value
-        self.callbackUpdateUI()
+        if self.callbackUpdateUI:
+            self.callbackUpdateUI()
 
     @property
     def connection_test_running(self):
@@ -67,7 +70,8 @@ class SmartFilamentSensorDetectionData(object):
     @connection_test_running.setter
     def connection_test_running(self, value):
         self._connection_test_running = value
-        self.callbackUpdateUI()
+        if self.callbackUpdateUI:
+            self.callbackUpdateUI()
 
     def __init__(self, pRemainingDistance, pAbsolutExtrusion, pCallback=None):
         self._remaining_distance = pRemainingDistance
@@ -79,8 +83,19 @@ class SmartFilamentSensorDetectionData(object):
         self._print_started = False
         self._lastE = -1
         self._currentE = -1
-        self._last_motion_detected = ""
+        self._last_motion_detected = 0
         self._filament_moving = False
+        self._connection_test_running = False
 
     def toJSON(self):
-         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+        data = {
+            "_remaining_distance": self._remaining_distance,
+            "_absolut_extrusion": self._absolut_extrusion,
+            "_print_started": self._print_started,
+            "_lastE": self._lastE,
+            "_currentE": self._currentE,
+            "_last_motion_detected": self._last_motion_detected,
+            "_filament_moving": self._filament_moving,
+            "_connection_test_running": self._connection_test_running,
+        }
+        return json.dumps(data, indent=4)
