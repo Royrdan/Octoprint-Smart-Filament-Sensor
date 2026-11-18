@@ -3,16 +3,12 @@ import threading
 import time
 
 class FilamentMotionSensorTimeoutDetection(threading.Thread):
-    used_pin = -1
-    max_not_moving_time = -1
-    keepRunning = True
-
-    # Initialize FilamentMotionSensor
-    def __init__(self, threadID, threadName, pUsedPin, pMaxNotMovingTime, pLogger, pData, pCallback=None):
+    def __init__(self, threadID, threadName, pUsedPin, pMaxNotMovingTime, pLogger, pData, pTimeoutCallback=None, pMotionCallback=None, pCallback=None):
         threading.Thread.__init__(self)
         self.threadID = threadID
         self.name = threadName
-        self.callback = pCallback
+        self.timeout_callback = pTimeoutCallback if pTimeoutCallback is not None else pCallback
+        self.motion_callback = pMotionCallback
         self._logger = pLogger
         self._data = pData
 
@@ -20,32 +16,67 @@ class FilamentMotionSensorTimeoutDetection(threading.Thread):
         self.max_not_moving_time = pMaxNotMovingTime
         self._data.last_motion_detected = time.time()
         self.keepRunning = True
+        self.use_polling = False
+        self.last_pin_state = None
 
         # Remove event, if already an event was set
         try:
             GPIO.remove_event_detect(self.used_pin)
-        except:
-            self._logger.warn("Pin " + str(pUsedPin) + " not used before")
-            
-        GPIO.add_event_detect(self.used_pin, GPIO.BOTH, callback=self.motion)
+        except Exception:
+            pass
 
-    # Override run method of threading
+        try:
+            GPIO.add_event_detect(self.used_pin, GPIO.BOTH, callback=self.motion)
+            self._logger.info("Using hardware edge detection for %s on pin %s", self.name, self.used_pin)
+        except Exception as e:
+            self._logger.warning("Hardware edge detection failed on pin %s (%s). Falling back to software polling.", self.used_pin, e)
+            self.use_polling = True
+            try:
+                self.last_pin_state = GPIO.input(self.used_pin)
+            except Exception as e2:
+                self._logger.error("Failed to read initial GPIO state on pin %s: %s", self.used_pin, e2)
+
     def run(self):
+        last_check_time = time.time()
         while self.keepRunning:
-            timespan = (time.time() - self._data.last_motion_detected)
+            now = time.time()
 
-            if (timespan > self.max_not_moving_time):
-                if(self.callback != None):
-                    self.callback()
+            # Software polling fallback if edge detection failed
+            if self.use_polling:
+                try:
+                    current_state = GPIO.input(self.used_pin)
+                    if self.last_pin_state is not None and current_state != self.last_pin_state:
+                        self.last_pin_state = current_state
+                        self.motion(self.used_pin)
+                    else:
+                        self.last_pin_state = current_state
+                except Exception as e:
+                    self._logger.debug("Error during GPIO poll: %s", e)
 
-            time.sleep(0.250)
+            # Check timeout interval (~250ms)
+            if (now - last_check_time) >= 0.25:
+                last_check_time = now
+                timespan = now - self._data.last_motion_detected
+                if timespan > self.max_not_moving_time:
+                    if self.timeout_callback is not None:
+                        try:
+                            self.timeout_callback()
+                        except Exception as e:
+                            self._logger.error("Error in timeout callback: %s", e)
 
-        GPIO.remove_event_detect(self.used_pin)
+            # Poll every 20ms if polling mode, otherwise sleep 250ms
+            time.sleep(0.02 if self.use_polling else 0.25)
 
-    # Eventhandler for GPIO filament sensor signal
-    # The new state of the GPIO pin is read and determinated.
-    # It is checked if motion is detected and printed to the console.
-    def motion(self, pPin):
+        try:
+            GPIO.remove_event_detect(self.used_pin)
+        except Exception:
+            pass
+
+    def motion(self, pPin=None):
         self._data.last_motion_detected = time.time()
-        self.callback(True)
-        self._logger.debug("Motion detected at " + str(self._data.last_motion_detected))
+        if self.motion_callback is not None:
+            try:
+                self.motion_callback()
+            except Exception as e:
+                self._logger.error("Error in motion callback: %s", e)
+        self._logger.debug("Motion detected at %s", self._data.last_motion_detected)
